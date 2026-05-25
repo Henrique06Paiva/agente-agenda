@@ -74,7 +74,8 @@ def criar_evento_na_agenda(evento: EventoEstruturado):
             'start': {'dateTime': start_datetime, 'timeZone': 'America/Sao_Paulo'},
             'end': {'dateTime': end_datetime, 'timeZone': 'America/Sao_Paulo'},
         }
-        event = service.events().insert(calendarId='primary', body=event_body).execute()
+        ID_DA_AGENDA_FAMILIA = "0ce24813f4e5f93ab0eefe3c671390f92227541c7a287177f3f7818a01642b05@group.calendar.google.com"
+        event = service.events().insert(calendarId=ID_DA_AGENDA_FAMILIA, body=event_body).execute()
         return event.get('htmlLink')
     except HttpError as error:
         st.error(f"Erro no Google Calendar: {error}")
