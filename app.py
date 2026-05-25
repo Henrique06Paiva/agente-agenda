@@ -157,18 +157,21 @@ with st.sidebar:
     
     # 1. Status do Google Calendar
     calendar_conectado = False
+    auth_erro_msg = None
     try:
         creds = calendar_service.autenticar()
         if creds and creds.valid:
             calendar_conectado = True
-    except Exception:
-        pass
+    except Exception as e:
+        auth_erro_msg = str(e)
     
     st.markdown("### Conexões e Serviços")
     if calendar_conectado:
         st.markdown('<div class="status-badge status-ok">🟢 Google Agenda: Conectado</div>', unsafe_allow_html=True)
     else:
         st.markdown('<div class="status-badge status-warn">🔴 Google Agenda: Desconectado</div>', unsafe_allow_html=True)
+        if auth_erro_msg:
+            st.caption(f"Erro na autenticação: `{auth_erro_msg}`")
 
     if gemini_ativo:
         st.markdown('<div class="status-badge status-ok">🟢 Gemini API: Ativo</div>', unsafe_allow_html=True)

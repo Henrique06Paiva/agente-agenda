@@ -31,6 +31,8 @@ class CalendarService:
                     self.creds.refresh(Request())
                 except Exception:
                     self.creds = None
+            else:
+                self.creds = None
             
             if not self.creds:
                 creds_dict = get_google_credentials_dict()
