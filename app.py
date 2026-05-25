@@ -38,7 +38,10 @@ def autenticar_agenda():
     return creds
 
 def inteligenca_interpretar_texto(texto_usuario: str) -> EventoEstruturado:
-    client = genai.Client() # Garanta que a variável GEMINI_API_KEY está configurada
+    # O Streamlit injeta o arquivo secrets automaticamente aqui
+    api_key_streamlit = st.secrets["GEMINI_API_KEY"]
+    client = genai.Client(api_key=api_key_streamlit)
+    
     hoje = datetime.date.today().strftime("%Y-%m-%d")
     dia_semana = datetime.date.today().strftime("%A")
     
