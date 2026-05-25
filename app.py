@@ -1,146 +1,307 @@
 import datetime
 import os
 import streamlit as st
-from google import genai
-from pydantic import BaseModel
-from google.auth.transport.requests import Request
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+
+# Importações locais do nosso novo design modular
+from src.config import get_gemini_api_key, get_calendar_id, TIMEZONE
+from src.ai_service import AIService
+from src.calendar_service import CalendarService
 
 # Configurações da página do Streamlit
-st.set_page_config(page_title="Agente de Agenda da Família", page_icon="🧙‍♂️", layout="centered")
+st.set_page_config(
+    page_title="Agente de Agenda Inteligente",
+    page_icon="🧙‍♂️",
+    layout="wide", # Layout wide para melhor aproveitamento do painel
+    initial_sidebar_state="expanded"
+)
 
-SCOPES = ['https://www.googleapis.com/auth/calendar.events']
+# Estilização CSS customizada para visual premium (Dark/Light adaptativo)
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&display=swap');
 
-# Estrutura do Pydantic para a IA
-class EventoEstruturado(BaseModel):
-    summary: str
-    description: str
-    data_inicio: str
-    hora_inicio: str
-    duracao_minutos: int
+/* Ajustar fonte geral da página */
+html, body, [class*="css"], .stMarkdown {
+    font-family: 'Outfit', sans-serif;
+}
 
-# Funções do Google Agenda e IA que você já validou
-def autenticar_agenda():
-    creds = None
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-    
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            # LÊ DIRETO DOS SECRETS DO STREAMLIT
-            if "GOOGLE_CREDENTIALS" in st.secrets:
-                # Transforma o bloco TOML em um dicionário Python que o Google reconhece
-                creds_dict = {"installed": dict(st.secrets["GOOGLE_CREDENTIALS"]["installed"])}
-                flow = InstalledAppFlow.from_client_config(creds_dict, SCOPES)
-                creds = flow.run_local_server(port=0)
-            else:
-                # Fallback para rodar local caso o arquivo ainda exista na sua máquina
-                flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
-                creds = flow.run_local_server(port=0)
-                
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
-    return creds
+/* Título com degradê brilhante */
+.title-gradient {
+    background: linear-gradient(135deg, #a78bfa, #818cf8, #4f46e5);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-size: 2.5rem;
+    font-weight: 800;
+    margin-bottom: 0rem;
+    padding-bottom: 0.2rem;
+}
 
-def inteligenca_interpretar_texto(texto_usuario: str) -> EventoEstruturado:
-    # O Streamlit injeta o arquivo secrets automaticamente aqui
-    api_key_streamlit = st.secrets["GEMINI_API_KEY"]
-    client = genai.Client(api_key=api_key_streamlit)
-    
-    hoje = datetime.date.today().strftime("%Y-%m-%d")
-    dia_semana = datetime.date.today().strftime("%A")
-    
-    prompt = f"""
-    Você é um assistente executivo de alto nível. Seu trabalho é ler a mensagem do usuário e extrair os dados para criar um evento na agenda.
-    Hoje é dia {hoje} ({dia_semana}).
-    
-    Mensagem do usuário: "{texto_usuario}"
-    """
-    
-    response = client.models.generate_content(
-        model='gemini-2.5-flash',
-        contents=prompt,
-        config=dict(
-            response_mime_type="application/json",
-            response_schema=EventoEstruturado,
-        ),
-    )
-    return EventoEstruturado.model_validate_json(response.text)
+/* Card moderno para os eventos */
+.event-card {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(128, 128, 128, 0.2);
+    border-radius: 14px;
+    padding: 20px;
+    margin: 15px 0;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.05);
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.event-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(99, 102, 241, 0.6);
+    box-shadow: 0 15px 35px rgba(99, 102, 241, 0.1);
+}
 
-def criar_evento_na_agenda(evento: EventoEstruturado):
-    creds = autenticar_agenda()
-    try:
-        service = build('calendar', 'v3', credentials=creds)
-        start_datetime = f"{evento.data_inicio}T{evento.hora_inicio}:00"
-        inicio_dt = datetime.datetime.strptime(start_datetime, "%Y-%m-%dT%H:%M:%S")
-        fim_dt = inicio_dt + datetime.timedelta(minutes=evento.duracao_minutos)
-        end_datetime = fim_dt.isoformat()
-        
-        event_body = {
-            'summary': evento.summary,
-            'description': evento.description,
-            'start': {'dateTime': start_datetime, 'timeZone': 'America/Sao_Paulo'},
-            'end': {'dateTime': end_datetime, 'timeZone': 'America/Sao_Paulo'},
-        }
-        ID_DA_AGENDA_FAMILIA = "0ce24813f4e5f93ab0eefe3c671390f92227541c7a287177f3f7818a01642b05@group.calendar.google.com"
-        event = service.events().insert(calendarId=ID_DA_AGENDA_FAMILIA, body=event_body).execute()
-        return event.get('htmlLink')
-    except HttpError as error:
-        st.error(f"Erro no Google Calendar: {error}")
-        return None
+.event-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    color: #818cf8;
+    margin-bottom: 10px;
+}
 
-# --- RENDERIZAÇÃO DA INTERFACE WEB ---
+.event-detail-item {
+    font-size: 0.95rem;
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
 
-st.title("🧙‍♂️ Assistente de Agenda Inteligente")
-st.write("Diga o que você tem para fazer e eu organizo a agenda da família para você!")
+.badge-success {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    display: inline-block;
+    margin-top: 10px;
+}
 
-# Inicializa o histórico de mensagens na sessão se não existir
-if "messages" not in st.session_state:
-    st.session_state.messages = [
-        {"role": "assistant", "content": "Olá! O que você gostaria de agendar hoje? (Ex: 'Reunião do projeto Estocaí quinta às 14h')"}
-    ]
+/* Botões de Link no estilo da identidade do app */
+.btn-calendar {
+    display: inline-block;
+    background: linear-gradient(135deg, #6366f1, #4f46e5);
+    color: white !important;
+    text-decoration: none;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 0.88rem;
+    margin-top: 12px;
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.25);
+    transition: all 0.2s ease;
+}
+.btn-calendar:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(79, 70, 229, 0.45);
+    background: linear-gradient(135deg, #4f46e5, #4338ca);
+}
 
-# Mostra as mensagens anteriores na tela
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+/* Badge de conexão na barra lateral */
+.status-badge {
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    margin-bottom: 12px;
+    border: 1px solid rgba(128, 128, 128, 0.15);
+}
+.status-ok {
+    background: rgba(52, 211, 153, 0.1);
+    color: #34d399;
+}
+.status-warn {
+    background: rgba(248, 113, 113, 0.1);
+    color: #f87171;
+}
+</style>
+""", unsafe_allow_html=True)
 
-# Campo de entrada de texto (Chat Input)
-if prompt_usuario := st.chat_input("Digite o compromisso aqui..."):
-    # Mostra a mensagem do usuário no chat
-    with st.chat_message("user"):
-        st.markdown(prompt_usuario)
-    st.session_state.messages.append({"role": "user", "content": prompt_usuario})
-
-    # Resposta do agente
-    with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        message_placeholder.markdown("Thinking... 🧠")
-        
+# Helper para formatar a data que vem da API do Google Agenda
+def formatar_data_evento(event_time_dict):
+    if not event_time_dict:
+        return "N/A"
+    if 'dateTime' in event_time_dict:
+        dt_str = event_time_dict['dateTime']
         try:
-            # 1. IA interpreta o texto
-            evento = inteligenca_interpretar_texto(prompt_usuario)
+            # Tenta converter datetime ISO para exibição legível
+            dt = datetime.datetime.fromisoformat(dt_str)
+            return dt.strftime("%d/%m/%Y às %H:%M")
+        except Exception:
+            return dt_str
+    elif 'date' in event_time_dict:
+        dt_str = event_time_dict['date']
+        try:
+            dt = datetime.date.fromisoformat(dt_str)
+            return dt.strftime("%d/%m/%Y")
+        except Exception:
+            return dt_str
+    return "N/A"
+
+# Inicialização de Serviços
+try:
+    ai_service = AIService()
+    gemini_ativo = True
+except Exception as e:
+    gemini_ativo = False
+    gemini_erro_msg = str(e)
+
+calendar_service = CalendarService()
+
+# --- BARRA LATERAL: Configurações e Status ---
+with st.sidebar:
+    st.markdown("<h2 style='text-align: center; margin-bottom: 20px;'>🧙‍♂️ Painel de Controle</h2>", unsafe_allow_html=True)
+    st.markdown("---")
+    
+    # 1. Status do Google Calendar
+    calendar_conectado = False
+    try:
+        creds = calendar_service.autenticar()
+        if creds and creds.valid:
+            calendar_conectado = True
+    except Exception:
+        pass
+    
+    st.markdown("### Conexões e Serviços")
+    if calendar_conectado:
+        st.markdown('<div class="status-badge status-ok">🟢 Google Agenda: Conectado</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="status-badge status-warn">🔴 Google Agenda: Desconectado</div>', unsafe_allow_html=True)
+
+    if gemini_ativo:
+        st.markdown('<div class="status-badge status-ok">🟢 Gemini API: Ativo</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="status-badge status-warn">🔴 Gemini API: Erro de API Key</div>', unsafe_allow_html=True)
+        if not gemini_ativo:
+            st.caption(f"Detalhe: {gemini_erro_msg}")
             
-            # 2. Cria o evento no Google
-            link_agenda = criar_evento_na_agenda(evento)
-            
-            if link_agenda:
-                resposta_sucesso = f"✅ **Entendido!** Agendei o compromisso:\n\n" \
-                                   f"* **Título:** {evento.summary}\n" \
-                                   f"* **Data:** {evento.data_inicio} às {evento.hora_inicio}\n" \
-                                   f"* **Duração:** {evento.duracao_minutos} min\n\n" \
-                                   f"[Clique aqui para ver na agenda]({link_agenda})"
-                message_placeholder.markdown(resposta_sucesso)
-                st.session_state.messages.append({"role": "assistant", "content": resposta_sucesso})
+    st.markdown("---")
+    
+    # 2. Configurações da Agenda
+    st.markdown("### Configurações Ativas")
+    st.text_input("ID da Agenda", value=get_calendar_id(), disabled=True, help="Para alterar o ID da Agenda, configure 'CALENDAR_ID' no secrets.toml.")
+    st.text_input("Fuso Horário", value=TIMEZONE, disabled=True)
+    
+    st.markdown("---")
+    
+    # 3. Ferramentas de Manutenção
+    st.markdown("### Utilitários")
+    if st.button("Limpar Token (Desconectar Google)", help="Remove o arquivo token.json local e força novo login na próxima interação."):
+        if os.path.exists("token.json"):
+            os.remove("token.json")
+            st.success("Token removido! Recarregando página...")
+            st.rerun()
+        else:
+            st.info("Nenhum token local foi encontrado.")
+
+# --- CORPO PRINCIPAL ---
+col1, col2 = st.columns([1, 12])
+with col2:
+    st.markdown('<h1 class="title-gradient">Assistente de Agenda Inteligente</h1>', unsafe_allow_html=True)
+    st.markdown("Interaja por chat com o agente para agendar compromissos ou visualize os eventos da família em tempo real.")
+
+# Criação de Abas
+tab_chat, tab_agenda = st.tabs(["💬 Conversar com Agente", "📅 Visualizar Agenda da Família"])
+
+# --- TAB 1: Chat de Interação com o Agente ---
+with tab_chat:
+    # Inicializa o histórico de mensagens na sessão se não existir
+    if "messages" not in st.session_state:
+        st.session_state.messages = [
+            {
+                "role": "assistant", 
+                "content": "Olá! Sou o seu assistente de agenda familiar. O que você gostaria de planejar hoje? \n\n*Exemplo: 'Reunião de negócios quinta-feira às 15:00 com duração de 1 hora.'*"
+            }
+        ]
+
+    # Mostra as mensagens anteriores na tela
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"], unsafe_allow_html=True)
+
+    # Input do Usuário
+    if prompt_usuario := st.chat_input("Digite aqui o seu compromisso..."):
+        # Mostra a mensagem do usuário
+        with st.chat_message("user"):
+            st.markdown(prompt_usuario)
+        st.session_state.messages.append({"role": "user", "content": prompt_usuario})
+
+        # Resposta do assistente
+        with st.chat_message("assistant"):
+            if not gemini_ativo:
+                erro_msg = "🚨 **Erro:** O serviço do Gemini não está ativo. Por favor, configure a chave 'GEMINI_API_KEY' no seu painel de segredos."
+                st.markdown(erro_msg)
+                st.session_state.messages.append({"role": "assistant", "content": erro_msg})
+            elif not calendar_conectado:
+                erro_msg = "🚨 **Erro:** A conexão com o Google Agenda falhou ou não foi autorizada. Verifique as credenciais."
+                st.markdown(erro_msg)
+                st.session_state.messages.append({"role": "assistant", "content": erro_msg})
             else:
-                st.error("Não consegui salvar o evento na agenda.")
-                
-        except Exception as e:
-            resposta_erro = f"Desculpe, tive um problema ao processar esse pedido. Erro: {e}"
-            message_placeholder.markdown(resposta_erro)
-            st.session_state.messages.append({"role": "assistant", "content": resposta_erro})
+                with st.spinner("Analisando detalhes e agendando compromisso... 🧠"):
+                    try:
+                        # 1. IA interpreta o texto
+                        evento = ai_service.interpretar_compromisso(prompt_usuario)
+                        
+                        # 2. Cria o evento no Google Calendar
+                        link_agenda = calendar_service.criar_evento(evento)
+                        
+                        if link_agenda:
+                            # Renderiza o cartão premium de sucesso
+                            card_html = f"""
+                            <div class="event-card">
+                                <div class="event-title">📅 {evento.summary}</div>
+                                <div class="event-detail-item">⏱️ <b>Data/Hora:</b> {evento.data_inicio} às {evento.hora_inicio}</div>
+                                <div class="event-detail-item">⏳ <b>Duração:</b> {evento.duracao_minutos} minutos</div>
+                                <div class="event-detail-item">📝 <b>Notas:</b> {evento.description or 'Sem notas adicionais.'}</div>
+                                <div class="badge-success">Evento Agendado com Sucesso</div><br>
+                                <a class="btn-calendar" href="{link_agenda}" target="_blank">Visualizar no Google Agenda</a>
+                            </div>
+                            """
+                            st.markdown(card_html, unsafe_allow_html=True)
+                            st.session_state.messages.append({"role": "assistant", "content": card_html})
+                        else:
+                            st.error("Não consegui cadastrar o evento na agenda. Verifique os detalhes.")
+                            
+                    except Exception as e:
+                        resposta_erro = f"Desculpe, tive um problema ao salvar esse evento. Detalhe técnico: `{str(e)}`"
+                        st.markdown(resposta_erro)
+                        st.session_state.messages.append({"role": "assistant", "content": resposta_erro})
+
+# --- TAB 2: Visualização dos Próximos Eventos ---
+with tab_agenda:
+    st.markdown("### 📅 Próximos Compromissos Agendados")
+    st.write("Abaixo estão listados os próximos eventos na Agenda da Família.")
+
+    # Botão para atualizar a lista manualmente
+    col_ref, _ = st.columns([2, 10])
+    with col_ref:
+        refresh_btn = st.button("🔄 Atualizar Agenda")
+
+    if not calendar_conectado:
+        st.warning("Autentique sua conta Google para visualizar os próximos compromissos.")
+    else:
+        with st.spinner("Buscando compromissos futuros..."):
+            eventos = calendar_service.listar_proximos_eventos(max_resultados=8)
+            
+            if not eventos:
+                st.info("Nenhum compromisso agendado para os próximos dias.")
+            else:
+                # Exibição dos eventos futuros em colunas e cards bonitos
+                for ev in eventos:
+                    resumo = ev.get('summary', 'Compromisso Sem Título')
+                    desc = ev.get('description', 'Sem descrição')
+                    inicio = formatar_data_evento(ev.get('start'))
+                    fim = formatar_data_evento(ev.get('end'))
+                    link = ev.get('htmlLink', '#')
+                    
+                    st.markdown(f"""
+                    <div class="event-card">
+                        <div class="event-title">🗓️ {resumo}</div>
+                        <div class="event-detail-item">⏰ <b>De:</b> {inicio}</div>
+                        <div class="event-detail-item">⏰ <b>Até:</b> {fim}</div>
+                        <div class="event-detail-item">📝 <b>Notas:</b> {desc}</div>
+                        <a class="btn-calendar" href="{link}" target="_blank">Visualizar no Calendário</a>
+                    </div>
+                    """, unsafe_allow_html=True)
