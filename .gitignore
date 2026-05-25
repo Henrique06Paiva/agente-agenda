@@ -1,3 +1,4 @@
 .streamlit/
 token.json
+credentials.json
 __pycache__/
