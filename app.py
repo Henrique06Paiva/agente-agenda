@@ -25,13 +25,43 @@ class EventoEstruturado(BaseModel):
 # Funções do Google Agenda e IA que você já validou
 def autenticar_agenda():
     creds = None
+    
+    # 1. Tenta carregar o token dos segredos do Streamlit se rodar na nuvem
+    if "GOOGLE_TOKEN_JSON" in st.secrets:
+        try:
+            import json
+            token_dict = json.loads(st.secrets["GOOGLE_TOKEN_JSON"])
+            creds = Credentials.from_authorized_user_info(token_dict, SCOPES)
+            if creds and not creds.valid and creds.refresh_token:
+                creds.refresh(Request())
+            if creds and creds.valid:
+                return creds
+        except Exception:
+            pass
+
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
     
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
+            try:
+                creds.refresh(Request())
+            except Exception:
+                creds = None
+        
+        if not creds or not creds.valid:
+            # Evita travamento infinito na nuvem se não houver token válido
+            is_cloud = (
+                os.environ.get("STREAMLIT_RUNTIME_ENV") is not None or 
+                os.environ.get("PORT") is not None or
+                os.environ.get("STREAMLIT_SERVER_PORT") is not None
+            )
+            if is_cloud:
+                raise RuntimeError(
+                    "Token inválido ou ausente. Para rodar no Streamlit Cloud, "
+                    "configure o segredo 'GOOGLE_TOKEN_JSON' nas configurações do app."
+                )
+
             # LÊ DIRETO DOS SECRETS DO STREAMLIT
             if "GOOGLE_CREDENTIALS" in st.secrets:
                 # Transforma o bloco TOML em um dicionário Python que o Google reconhece
@@ -43,8 +73,8 @@ def autenticar_agenda():
                 flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
                 creds = flow.run_local_server(port=0)
                 
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
+            with open('token.json', 'w') as token:
+                token.write(creds.to_json())
     return creds
 
 def inteligenca_interpretar_texto(texto_usuario: str) -> EventoEstruturado:
