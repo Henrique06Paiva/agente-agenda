@@ -17,6 +17,23 @@ class CalendarService:
 
     def autenticar(self) -> Credentials:
         """Realiza a autenticação com a API do Google Agenda, gerenciando tokens locais ou segredos do Streamlit."""
+        # Registra um navegador customizado no Windows para evitar o erro "could not locate runnable browser"
+        import webbrowser
+        import subprocess
+
+        class WindowsCmdBrowser(object):
+            def open(self, url, new=0, autoraise=True):
+                try:
+                    subprocess.Popen(f'start "" "{url}"', shell=True)
+                    return True
+                except Exception:
+                    return False
+
+        try:
+            webbrowser.register("cmd_start", None, WindowsCmdBrowser(), preferred=True)
+        except Exception:
+            pass
+
         if os.path.exists('token.json'):
             try:
                 self.creds = Credentials.from_authorized_user_file('token.json', SCOPES)
